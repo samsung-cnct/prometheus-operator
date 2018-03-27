@@ -51,6 +51,11 @@ dependencies:
     repository: https://s3-eu-west-1.amazonaws.com/coreos-charts/stable/
     condition: deployExporterNode
 
+  - name: exporter-blackbox
+    version: 0.1.0
+    repository: https://s3-eu-west-1.amazonaws.com/coreos-charts/stable/
+    condition: deployBlackbox
+
   - name: grafana
     version: 0.0.23
     #e2e-repository: file://../grafana
