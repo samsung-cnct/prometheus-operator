@@ -26,7 +26,7 @@ func main() {
         log.Fatal(err)
     }
     for _, node := range nodes.Items {
-        fmt.Printf("name=%q schedulable=%t\n", node.Metadata.Name, !*node.Spec.Unschedulable)
+        fmt.Printf("name=%q schedulable=%t\n", *node.Metadata.Name, !*node.Spec.Unschedulable)
     }
 }
 ```
@@ -44,14 +44,30 @@ This client supports every API group version present since 1.3.
 
 ## Usage
 
-### Namespaces
+### Namespace
+
+When performing a list or watch operation, the namespace to list or watch in is provided as an argument.
 
 ```go
-pods, err := client.ListPods(ctx, k8s.AllNamespaces) // Pods in all namespaces.
+pods, err := core.ListPods(ctx, "custom-namespace") // Pods from the "custom-namespace"
 ```
 
+A special value `AllNamespaces` indicates that the list or watch should be performed on all cluster resources.
+
 ```go
-pods, err := client.ListPods(ctx, "custom-namespace") // Pods from the "custom-namespace"
+pods, err := core.ListPods(ctx, k8s.AllNamespaces) // Pods in all namespaces.
+```
+
+Both in-cluster and out-of-cluster clients are initialized with a primary namespace. This is the recommended value to use when listing or watching.
+
+```go
+client, err := k8s.NewInClusterClient()
+if err != nil {
+    // handle error
+}
+
+// List pods in the namespace the client is running in.
+pods, err := client.CoreV1().ListPods(ctx, client.Namespace)
 ```
 
 ### Label selectors
@@ -63,7 +79,7 @@ l := new(k8s.LabelSelector)
 l.Eq("tier", "production")
 l.In("app", "database", "frontend")
 
-pods, err := client.CoreV1().ListPods(ctx, "", l.Selector())
+pods, err := client.CoreV1().ListPods(ctx, client.Namespace, l.Selector())
 ```
 
 ### Working with resources
@@ -76,11 +92,12 @@ import (
 
     "github.com/ericchiang/k8s"
     "github.com/ericchiang/k8s/api/v1"
+    metav1 "github.com/ericchiang/k8s/apis/meta/v1"
 )
 
 func createConfigMap(client *k8s.Client, name string, values map[string]string) error {
     cm := &v1.ConfigMap{
-        Metadata: &v1.ObjectMeta{
+        Metadata: &metav1.ObjectMeta{
             Name:      &name,
             Namespace: &client.Namespace,
         },
@@ -134,7 +151,7 @@ Errors returned by the Kubernetes API are formatted as [`unversioned.Status`][un
 // exists.
 func createConfigMap(client *k8s.Client, name string, values map[string]string) error {
     cm := &v1.ConfigMap{
-        Metadata: &v1.ObjectMeta{
+        Metadata: &metav1.ObjectMeta{
             Name:      &name,
             Namespace: &client.Namespace,
         },

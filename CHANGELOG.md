@@ -1,3 +1,40 @@
+## 0.17.0 / 2018-02-15
+
+This release adds validations as a beta feature. It will only be installed on new clusters, existing CRD definitions will not be updated, this will be done in a future release. Please try out this feature and give us feedback!
+
+* [CHANGE] Default Prometheus version v2.2.0-rc.0.
+* [CHANGE] Default Alertmanager version v0.14.0.
+* [FEATURE] Generate and add CRD validations.
+* [FEATURE] Add ability to set `serviceAccountName` for Alertmanager Pods.
+* [FEATURE] Add ability to specify custom `securityContext` for Alertmanager Pods.
+* [ENHANCEMENT] Default to non-root security context for Alertmanager Pods.
+
+## 0.16.1 / 2018-01-16
+
+* [CHANGE] Default to Alertmanager v0.13.0.
+* [BUGFIX] Alertmanager flags must be double dashed starting v0.13.0.
+
+## 0.16.0 / 2018-01-11
+
+* [FEATURE] Add support for specifying remote storage configurations.
+* [FEATURE] Add ability to specify log level.
+* [FEATURE] Add support for dropping metrics at scrape time.
+* [ENHANCEMENT] Ensure that resource limit can't make Pods unschedulable.
+* [ENHANCEMENT] Allow configuring emtpyDir volumess
+* [BUGFIX] Use `--storage.tsdb.no-lockfile` for Prometheus 2.0.
+* [BUGFIX] Fix Alertmanager default storage.path.
+
+## 0.15.0 / 2017-11-22
+
+* [CHANGE] Default Prometheus version v2.0.0
+* [BUGFIX] Generate ExternalLabels deterministically
+* [BUGFIX] Fix incorrect mount path of Alertmanager data volume
+* [EXPERIMENTAL] Add ability to specify CRD Kind name
+
+## 0.14.1 / 2017-11-01
+
+* [BUGFIX] Ignore illegal change of PodManagementPolicy to StatefulSet.
+
 ## 0.14.0 / 2017-10-19
 
 * [CHANGE] Default Prometheus version v2.0.0-rc.1.
@@ -203,4 +240,3 @@ with the operator.
 
 * [CHANGE] Use StatefulSet instead of PetSet
 * [BUGFIX] Fix Prometheus config generation for labels containing "-"
-

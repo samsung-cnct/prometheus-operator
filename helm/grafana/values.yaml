@@ -1,6 +1,28 @@
 nodeSelector: {}
 
+## Tolerations for use with node taints
+## Ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+##
+tolerations: {}
+  #  - key: "key"
+  #    operator: "Equal"
+  #    value: "value"
+  #    effect: "NoSchedule"
+
 annotations: {}
+
+## Pass extra environment variables to the Grafana container.
+##
+# extraVars:
+# - name: EXTRA_VAR_1
+#   value: extra-var-value-1
+# - name: EXTRA_VAR_2
+#   value: extra-var-value-2
+extraVars:
+
+## Change to true override Grafana's default config.
+## Make sure grafana.ini is present on /etc/grafana
+mountGrafanaConfig: false
 
 adminUser: "admin"
 adminPassword: "admin"
@@ -42,7 +64,11 @@ service:
 ##
 image:
   repository: grafana/grafana
-  tag: 4.4.1
+  tag: 5.0.0
+
+grafanaWatcher:
+  repository: quay.io/coreos/grafana-watcher
+  tag: v0.0.8
 
 storageSpec: {}
 #   class: default
@@ -83,3 +109,13 @@ ingress:
 dataSource: {}
 
 serverDashboardFiles: {}
+
+## Keep the Dashboards that are defined in this HELM chart
+keepOriginalDashboards: true
+
+## Keep the Datasources that are defined in this HELM chart
+keepOriginalDatasources: true
+
+auth:
+  anonymous:
+    enabled: "true"

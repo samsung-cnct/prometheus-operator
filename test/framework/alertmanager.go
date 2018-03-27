@@ -17,14 +17,15 @@ package framework
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/client-go/pkg/api/v1"
 
 	"github.com/coreos/prometheus-operator/pkg/alertmanager"
 	monitoringv1 "github.com/coreos/prometheus-operator/pkg/client/monitoring/v1"
@@ -198,12 +199,12 @@ func amImage(version string) string {
 }
 
 func (f *Framework) WaitForAlertmanagerInitializedMesh(ns, name string, amountPeers int) error {
-	return wait.Poll(time.Second, time.Second*20, func() (bool, error) {
+	return wait.Poll(time.Second, time.Minute*5, func() (bool, error) {
 		amStatus, err := f.GetAlertmanagerConfig(ns, name)
 		if err != nil {
 			return false, err
 		}
-		if len(amStatus.Data.MeshStatus.Peers) == amountPeers {
+		if amStatus.Data.getAmountPeers() == amountPeers {
 			return true, nil
 		}
 
@@ -227,7 +228,7 @@ func (f *Framework) GetAlertmanagerConfig(ns, n string) (alertmanagerStatus, err
 }
 
 func (f *Framework) WaitForSpecificAlertmanagerConfig(ns, amName string, expectedConfig string) error {
-	return wait.Poll(time.Second, time.Minute*5, func() (bool, error) {
+	return wait.Poll(10*time.Second, time.Minute*5, func() (bool, error) {
 		config, err := f.GetAlertmanagerConfig(ns, "alertmanager-"+amName+"-0")
 		if err != nil {
 			return false, err
@@ -236,6 +237,8 @@ func (f *Framework) WaitForSpecificAlertmanagerConfig(ns, amName string, expecte
 		if config.Data.ConfigYAML == expectedConfig {
 			return true, nil
 		}
+
+		log.Printf("\n\nFound:\n\n%#+v\n\nExpected:\n\n%#+v\n\n", config.Data.ConfigYAML, expectedConfig)
 
 		return false, nil
 	})
@@ -246,10 +249,20 @@ type alertmanagerStatus struct {
 }
 
 type alertmanagerStatusData struct {
-	MeshStatus meshStatus `json:"meshStatus"`
-	ConfigYAML string     `json:"configYAML"`
+	ClusterStatus *clusterStatus `json:"clusterStatus,omitempty"`
+	MeshStatus    *clusterStatus `json:"meshStatus,omitempty"`
+	ConfigYAML    string         `json:"configYAML"`
 }
 
-type meshStatus struct {
+// Starting from AM v0.15.0 'MeshStatus' is called 'ClusterStatus'
+func (s *alertmanagerStatusData) getAmountPeers() int {
+	if s.MeshStatus != nil {
+		return len(s.MeshStatus.Peers)
+	} else {
+		return len(s.ClusterStatus.Peers)
+	}
+}
+
+type clusterStatus struct {
 	Peers []interface{} `json:"peers"`
 }

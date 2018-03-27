@@ -31,7 +31,7 @@ selfServiceMonitor: true
 ##
 image:
   repository: quay.io/prometheus/prometheus
-  tag: v1.7.1
+  tag: v2.2.1
 
 ## Labels to be added to the Prometheus
 ##
@@ -67,17 +67,50 @@ ingress:
 ##
 nodeSelector: {}
 
+## Tolerations for use with node taints
+## Ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+##
+tolerations: {}
+  #  - key: "key"
+  #    operator: "Equal"
+  #    value: "value"
+  #    effect: "NoSchedule"
+
+
 ## If true, the Operator won't process any Prometheus configuration changes
 ##
 paused: false
 
 ## If true, create & use RBAC resources
 ##
-rbacEnable: true
+global:
+  rbacEnable: true
 
 ## Number of Prometheus replicas desired
 ##
 replicaCount: 1
+
+## Log level for Prometheus be configured in
+##
+logLevel: info
+
+## Pod anti-affinity can prevent the scheduler from placing Prometheus replicas on the same node.
+## The default value "soft" means that the scheduler should *prefer* to not schedule two replica pods onto the same node but no guarantee is provided.
+## The value "hard" means that the scheduler is *required* to not schedule two replica pods onto the same node.
+## The value "" will disable pod anti-affinity so that no anti-affinity rules will be configured.
+podAntiAffinity: "soft"
+
+## The remote_read spec configuration for Prometheus.
+## Ref: https://github.com/coreos/prometheus-operator/blob/master/Documentation/api.md#remotereadspec
+remoteRead: {}
+  # remoteRead:
+  #   - url: http://remote1/read
+
+## The remote_write spec configuriation for Prometheus.
+## Ref: https://github.com/coreos/prometheus-operator/blob/master/Documentation/api.md#remotewritespec
+remoteWrite: {}
+  # remoteWrite:
+  #   - url: http://remote1/push
 
 ## Resource limits & requests
 ## Ref: https://kubernetes.io/docs/user-guide/compute-resources/
@@ -112,9 +145,12 @@ rules:
 ## object, which shall be mounted into the Prometheus Pods.
 ## Ref: https://github.com/coreos/prometheus-operator/blob/master/Documentation/api.md#prometheusspec
 ##
-secrets: {}
+secrets: []
 
 service:
+  ## Maintains session affinity.  Should be set to ClientIP for HA setup
+  ## Only options are ClientIP and None.  Do not leave blank.
+  sessionAffinity: None
   ## Annotations to be added to the Service
   ##
   annotations: {}
@@ -242,8 +278,14 @@ serviceMonitors: []
 ## Ref: https://github.com/coreos/prometheus-operator/blob/master/Documentation/user-guides/storage.md
 ##
 storageSpec: {}
-#   class: default
-#   resources:
-#     requests:
-#       storage: 16Gi
-#   selector: {}
+#  volumeClaimTemplate:
+#    spec:
+#      storageClassName: gluster
+#      accessModes: ["ReadWriteOnce"]
+#      resources:
+#        requests:
+#          storage: 50Gi
+#    selector: {}
+
+# default rules are in templates/prometheus.rules.yaml
+# prometheusRules: {}

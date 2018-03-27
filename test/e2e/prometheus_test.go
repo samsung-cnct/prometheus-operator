@@ -15,6 +15,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,11 +25,11 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/pkg/api/v1"
 
 	"github.com/coreos/prometheus-operator/pkg/alertmanager"
 	monitoringv1 "github.com/coreos/prometheus-operator/pkg/client/monitoring/v1"
@@ -139,7 +140,7 @@ func TestPrometheusResourceUpdate(t *testing.T) {
 	res := pods.Items[0].Spec.Containers[0].Resources
 
 	if !reflect.DeepEqual(res, p.Spec.Resources) {
-		t.Fatalf("resources don't match. Has %q, want %q", res, p.Spec.Resources)
+		t.Fatalf("resources don't match. Has %#+v, want %#+v", res, p.Spec.Resources)
 	}
 
 	p.Spec.Resources = v1.ResourceRequirements{
@@ -216,6 +217,7 @@ scrape_configs:
 		},
 		Data: map[string][]byte{
 			"prometheus.yaml": []byte(firstConfig),
+			"configmaps.json": []byte("{}"),
 		},
 	}
 
@@ -248,8 +250,13 @@ scrape_configs:
     static_configs:
       - targets:
         - 111.111.111.111:9090
-        - 111.111.111.112:9090 
+        - 111.111.111.112:9090
 `
+
+	cfg, err := framework.KubeClient.CoreV1().Secrets(ns).Get(cfg.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(errors.Wrap(err, "could not retrieve previous secret"))
+	}
 
 	cfg.Data["prometheus.yaml"] = []byte(secondConfig)
 	if _, err := framework.KubeClient.CoreV1().Secrets(ns).Update(cfg); err != nil {
@@ -544,7 +551,7 @@ func basicQueryWorking(ns, svcName string) (bool, error) {
 	}
 
 	rq := prometheusQueryAPIResponse{}
-	if err := json.NewDecoder(response).Decode(&rq); err != nil {
+	if err := json.NewDecoder(bytes.NewBuffer(response)).Decode(&rq); err != nil {
 		return false, err
 	}
 
@@ -576,7 +583,7 @@ func isAlertmanagerDiscoveryWorking(ns, promSVCName, alertmanagerName string) fu
 		}
 
 		ra := prometheusAlertmanagerAPIResponse{}
-		if err := json.NewDecoder(response).Decode(&ra); err != nil {
+		if err := json.NewDecoder(bytes.NewBuffer(response)).Decode(&ra); err != nil {
 			return false, err
 		}
 

@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1beta2"
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
 
 	testFramework "github.com/coreos/prometheus-operator/test/framework"
 )
@@ -130,28 +130,42 @@ func TestExposingAlertmanagerWithKubernetesAPI(t *testing.T) {
 func TestMeshInitialization(t *testing.T) {
 	t.Parallel()
 
-	ctx := framework.NewTestCtx(t)
-	defer ctx.Cleanup(t)
-	ns := ctx.CreateNamespace(t, framework.KubeClient)
-	ctx.SetupPrometheusRBAC(t, ns, framework.KubeClient)
+	// Starting with Alertmanager v0.15.0 hashicorp/memberlist is used for HA.
+	// Make sure both memberlist as well as mesh (< 0.15.0) work
+	amVersions := []string{"v0.14.0", "v0.15.0-rc.0"}
 
-	amClusterSize := 3
-	alertmanager := framework.MakeBasicAlertmanager("test", int32(amClusterSize))
-	alertmanagerService := framework.MakeAlertmanagerService(alertmanager.Name, "alertmanager-service", v1.ServiceTypeClusterIP)
+	for _, v := range amVersions {
+		version := v
+		t.Run(
+			fmt.Sprintf("amVersion%v", strings.Replace(version, ".", "-", -1)),
+			func(t *testing.T) {
+				t.Parallel()
+				ctx := framework.NewTestCtx(t)
+				defer ctx.Cleanup(t)
+				ns := ctx.CreateNamespace(t, framework.KubeClient)
+				ctx.SetupPrometheusRBAC(t, ns, framework.KubeClient)
 
-	if err := framework.CreateAlertmanagerAndWaitUntilReady(ns, alertmanager); err != nil {
-		t.Fatal(err)
-	}
+				amClusterSize := 3
+				alertmanager := framework.MakeBasicAlertmanager("test", int32(amClusterSize))
+				alertmanager.Spec.Version = version
+				alertmanagerService := framework.MakeAlertmanagerService(alertmanager.Name, "alertmanager-service", v1.ServiceTypeClusterIP)
 
-	if _, err := testFramework.CreateServiceAndWaitUntilReady(framework.KubeClient, ns, alertmanagerService); err != nil {
-		t.Fatal(err)
-	}
+				if err := framework.CreateAlertmanagerAndWaitUntilReady(ns, alertmanager); err != nil {
+					t.Fatal(err)
+				}
 
-	for i := 0; i < amClusterSize; i++ {
-		name := "alertmanager-" + alertmanager.Name + "-" + strconv.Itoa(i)
-		if err := framework.WaitForAlertmanagerInitializedMesh(ns, name, amClusterSize); err != nil {
-			t.Fatal(err)
-		}
+				if _, err := testFramework.CreateServiceAndWaitUntilReady(framework.KubeClient, ns, alertmanagerService); err != nil {
+					t.Fatal(err)
+				}
+
+				for i := 0; i < amClusterSize; i++ {
+					name := "alertmanager-" + alertmanager.Name + "-" + strconv.Itoa(i)
+					if err := framework.WaitForAlertmanagerInitializedMesh(ns, name, amClusterSize); err != nil {
+						t.Fatal(err)
+					}
+				}
+			},
+		)
 	}
 }
 
@@ -211,7 +225,7 @@ receivers:
 		t.Fatal(err)
 	}
 
-	firstExpectedConfig := "global:\n  resolve_timeout: 6m\n  smtp_require_tls: true\n  pagerduty_url: https://events.pagerduty.com/generic/2010-04-15/create_event.json\n  hipchat_url: https://api.hipchat.com/\n  opsgenie_api_host: https://api.opsgenie.com/\n  victorops_api_url: https://alert.victorops.com/integrations/generic/20131114/alert/\nroute:\n  receiver: webhook\n  group_by:\n  - job\n  group_wait: 30s\n  group_interval: 5m\n  repeat_interval: 12h\nreceivers:\n- name: webhook\n  webhook_configs:\n  - send_resolved: true\n    url: http://alertmanagerwh:30500/\ntemplates: []\n"
+	firstExpectedConfig := "global:\n  resolve_timeout: 6m\n  smtp_require_tls: true\n  pagerduty_url: https://events.pagerduty.com/v2/enqueue\n  hipchat_api_url: https://api.hipchat.com/\n  opsgenie_api_url: https://api.opsgenie.com/\n  wechat_api_url: https://qyapi.weixin.qq.com/cgi-bin/\n  victorops_api_url: https://alert.victorops.com/integrations/generic/20131114/alert/\nroute:\n  receiver: webhook\n  group_by:\n  - job\n  group_wait: 30s\n  group_interval: 5m\n  repeat_interval: 12h\nreceivers:\n- name: webhook\n  webhook_configs:\n  - send_resolved: true\n    url: http://alertmanagerwh:30500/\ntemplates: []\n"
 	log.Println("waiting for first expected config")
 	if err := framework.WaitForSpecificAlertmanagerConfig(ns, alertmanager.Name, firstExpectedConfig); err != nil {
 		t.Fatal(err)
@@ -224,7 +238,7 @@ receivers:
 		t.Fatal(err)
 	}
 
-	secondExpectedConfig := "global:\n  resolve_timeout: 5m\n  smtp_require_tls: true\n  pagerduty_url: https://events.pagerduty.com/generic/2010-04-15/create_event.json\n  hipchat_url: https://api.hipchat.com/\n  opsgenie_api_host: https://api.opsgenie.com/\n  victorops_api_url: https://alert.victorops.com/integrations/generic/20131114/alert/\nroute:\n  receiver: webhook\n  group_by:\n  - job\n  group_wait: 30s\n  group_interval: 5m\n  repeat_interval: 12h\nreceivers:\n- name: webhook\n  webhook_configs:\n  - send_resolved: true\n    url: http://alertmanagerwh:30500/\ntemplates: []\n"
+	secondExpectedConfig := "global:\n  resolve_timeout: 5m\n  smtp_require_tls: true\n  pagerduty_url: https://events.pagerduty.com/v2/enqueue\n  hipchat_api_url: https://api.hipchat.com/\n  opsgenie_api_url: https://api.opsgenie.com/\n  wechat_api_url: https://qyapi.weixin.qq.com/cgi-bin/\n  victorops_api_url: https://alert.victorops.com/integrations/generic/20131114/alert/\nroute:\n  receiver: webhook\n  group_by:\n  - job\n  group_wait: 30s\n  group_interval: 5m\n  repeat_interval: 12h\nreceivers:\n- name: webhook\n  webhook_configs:\n  - send_resolved: true\n    url: http://alertmanagerwh:30500/\ntemplates: []\n"
 	log.Println("waiting for second expected config")
 	if err := framework.WaitForSpecificAlertmanagerConfig(ns, alertmanager.Name, secondExpectedConfig); err != nil {
 		t.Fatal(err)
@@ -241,12 +255,17 @@ func TestAlertmanagerZeroDowntimeRollingDeployment(t *testing.T) {
 	ctx.SetupPrometheusRBAC(t, ns, framework.KubeClient)
 
 	whReplicas := int32(1)
-	whdpl := &v1beta1.Deployment{
+	whdpl := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "alertmanager-webhook",
 		},
-		Spec: v1beta1.DeploymentSpec{
+		Spec: appsv1.DeploymentSpec{
 			Replicas: &whReplicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": "alertmanager-webhook",
+				},
+			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{

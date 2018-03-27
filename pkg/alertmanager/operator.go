@@ -28,6 +28,8 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	appsv1 "k8s.io/api/apps/v1beta2"
+	"k8s.io/api/core/v1"
 	extensionsobj "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,8 +39,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/apps/v1beta1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 )
@@ -60,6 +60,8 @@ type Operator struct {
 
 	queue workqueue.RateLimitingInterface
 
+	statefulsetErrors prometheus.Counter
+
 	config Config
 }
 
@@ -69,7 +71,10 @@ type Config struct {
 	AlertmanagerDefaultBaseImage string
 	Namespace                    string
 	Labels                       prometheusoperator.Labels
+	CrdKinds                     monitoringv1.CrdKinds
 	CrdGroup                     string
+	EnableValidation             bool
+	DisableAutoUserGroup         bool
 }
 
 // New creates a new controller.
@@ -84,7 +89,7 @@ func New(c prometheusoperator.Config, logger log.Logger) (*Operator, error) {
 		return nil, errors.Wrap(err, "instantiating kubernetes client failed")
 	}
 
-	mclient, err := monitoring.NewForConfig(c.CrdGroup, cfg)
+	mclient, err := monitoring.NewForConfig(&c.CrdKinds, c.CrdGroup, cfg)
 	if err != nil {
 		return nil, errors.Wrap(err, "instantiating monitoring client failed")
 	}
@@ -106,7 +111,10 @@ func New(c prometheusoperator.Config, logger log.Logger) (*Operator, error) {
 			AlertmanagerDefaultBaseImage: c.AlertmanagerDefaultBaseImage,
 			Namespace:                    c.Namespace,
 			CrdGroup:                     c.CrdGroup,
+			CrdKinds:                     c.CrdKinds,
 			Labels:                       c.Labels,
+			EnableValidation:             c.EnableValidation,
+			DisableAutoUserGroup:         c.DisableAutoUserGroup,
 		},
 	}
 
@@ -118,8 +126,8 @@ func New(c prometheusoperator.Config, logger log.Logger) (*Operator, error) {
 		&monitoringv1.Alertmanager{}, resyncPeriod, cache.Indexers{},
 	)
 	o.ssetInf = cache.NewSharedIndexInformer(
-		cache.NewListWatchFromClient(o.kclient.AppsV1beta1().RESTClient(), "statefulsets", o.config.Namespace, nil),
-		&v1beta1.StatefulSet{}, resyncPeriod, cache.Indexers{},
+		cache.NewListWatchFromClient(o.kclient.AppsV1beta2().RESTClient(), "statefulsets", o.config.Namespace, fields.Everything()),
+		&appsv1.StatefulSet{}, resyncPeriod, cache.Indexers{},
 	)
 
 	o.alrtInf.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -137,7 +145,15 @@ func New(c prometheusoperator.Config, logger log.Logger) (*Operator, error) {
 }
 
 func (c *Operator) RegisterMetrics(r prometheus.Registerer) {
-	r.MustRegister(NewAlertmanagerCollector(c.alrtInf.GetStore()))
+	c.statefulsetErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_operator_alertmanager_reconcile_errors_total",
+		Help: "Number of errors that occurred while reconciling the alertmanager statefulset",
+	})
+
+	r.MustRegister(
+		c.statefulsetErrors,
+		NewAlertmanagerCollector(c.alrtInf.GetStore()),
+	)
 }
 
 // Run the controller.
@@ -250,6 +266,7 @@ func (c *Operator) processNextWorkItem() bool {
 		return true
 	}
 
+	c.statefulsetErrors.Inc()
 	utilruntime.HandleError(errors.Wrap(err, fmt.Sprintf("Sync %q failed", key)))
 	c.queue.AddRateLimited(key)
 
@@ -335,8 +352,8 @@ func (c *Operator) handleStatefulSetAdd(obj interface{}) {
 }
 
 func (c *Operator) handleStatefulSetUpdate(oldo, curo interface{}) {
-	old := oldo.(*v1beta1.StatefulSet)
-	cur := curo.(*v1beta1.StatefulSet)
+	old := oldo.(*appsv1.StatefulSet)
+	cur := curo.(*appsv1.StatefulSet)
 
 	c.logger.Log("msg", "update handler", "old", old.ResourceVersion, "cur", cur.ResourceVersion)
 
@@ -382,7 +399,7 @@ func (c *Operator) sync(key string) error {
 		return errors.Wrap(err, "synchronizing governing service failed")
 	}
 
-	ssetClient := c.kclient.AppsV1beta1().StatefulSets(am.Namespace)
+	ssetClient := c.kclient.AppsV1beta2().StatefulSets(am.Namespace)
 	// Ensure we have a StatefulSet running Alertmanager deployed.
 	obj, exists, err = c.ssetInf.GetIndexer().GetByKey(alertmanagerKeyToStatefulSetKey(key))
 	if err != nil {
@@ -400,7 +417,7 @@ func (c *Operator) sync(key string) error {
 		return nil
 	}
 
-	sset, err := makeStatefulSet(am, obj.(*v1beta1.StatefulSet), c.config)
+	sset, err := makeStatefulSet(am, obj.(*appsv1.StatefulSet), c.config)
 	if err != nil {
 		return errors.Wrap(err, "making the statefulset, to update, failed")
 	}
@@ -427,7 +444,7 @@ func AlertmanagerStatus(kclient kubernetes.Interface, a *monitoringv1.Alertmanag
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "retrieving pods of failed")
 	}
-	sset, err := kclient.AppsV1beta1().StatefulSets(a.Namespace).Get(statefulSetNameFromAlertmanagerName(a.Name), metav1.GetOptions{})
+	sset, err := kclient.AppsV1beta2().StatefulSets(a.Namespace).Get(statefulSetNameFromAlertmanagerName(a.Name), metav1.GetOptions{})
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "retrieving stateful set failed")
 	}
@@ -482,11 +499,11 @@ func (c *Operator) destroyAlertmanager(key string) error {
 	if !exists {
 		return nil
 	}
-	sset := obj.(*v1beta1.StatefulSet)
+	sset := obj.(*appsv1.StatefulSet)
 	*sset.Spec.Replicas = 0
 
 	// Update the replica count to 0 and wait for all pods to be deleted.
-	ssetClient := c.kclient.AppsV1beta1().StatefulSets(sset.Namespace)
+	ssetClient := c.kclient.AppsV1beta2().StatefulSets(sset.Namespace)
 
 	if _, err := ssetClient.Update(sset); err != nil {
 		return errors.Wrap(err, "updating statefulset for scale-down failed")
@@ -524,7 +541,7 @@ func (c *Operator) createCRDs() error {
 	}
 
 	crds := []*extensionsobj.CustomResourceDefinition{
-		k8sutil.NewAlertmanagerCustomResourceDefinition(c.config.CrdGroup, c.config.Labels.LabelsMap),
+		k8sutil.NewCustomResourceDefinition(c.config.CrdKinds.Alertmanager, c.config.CrdGroup, c.config.Labels.LabelsMap, c.config.EnableValidation),
 	}
 
 	crdClient := c.crdclient.ApiextensionsV1beta1().CustomResourceDefinitions()

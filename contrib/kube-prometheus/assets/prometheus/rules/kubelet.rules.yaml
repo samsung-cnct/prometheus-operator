@@ -1,5 +1,5 @@
 groups:
-- name: ./kubelet.rules
+- name: kubelet.rules
   rules:
   - alert: K8SNodeNotReady
     expr: kube_node_status_condition{condition="Ready",status="true"} == 0
@@ -18,20 +18,18 @@ groups:
     labels:
       severity: critical
     annotations:
-      description: '{{ $value }} Kubernetes nodes (more than 10% are in the NotReady
-        state).'
-      summary: Many Kubernetes nodes are Not Ready
+      description: '{{ $value }}% of Kubernetes nodes are not ready'
   - alert: K8SKubeletDown
-    expr: count(up{job="kubelet"} == 0) / count(up{job="kubelet"}) > 0.03
+    expr: count(up{job="kubelet"} == 0) / count(up{job="kubelet"}) * 100 > 3
     for: 1h
     labels:
       severity: warning
     annotations:
       description: Prometheus failed to scrape {{ $value }}% of kubelets.
-      summary: Many Kubelets cannot be scraped
+      summary: Prometheus failed to scrape
   - alert: K8SKubeletDown
-    expr: absent(up{job="kubelet"} == 1) or count(up{job="kubelet"} == 0) / count(up{job="kubelet"})
-      > 0.1
+    expr: (absent(up{job="kubelet"} == 1) or count(up{job="kubelet"} == 0) / count(up{job="kubelet"}))
+      * 100 > 10
     for: 1h
     labels:
       severity: critical
@@ -41,6 +39,7 @@ groups:
       summary: Many Kubelets cannot be scraped
   - alert: K8SKubeletTooManyPods
     expr: kubelet_running_pod_count > 100
+    for: 10m
     labels:
       severity: warning
     annotations:

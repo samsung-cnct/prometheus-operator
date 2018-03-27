@@ -1,3 +1,17 @@
+# exporter-node configuration
+deployExporterNode: True
+
+# Grafana
+deployGrafana: True
+
+## If true, create & use RBAC resources
+##
+global:
+  rbacEnable: true
+
+# AlertManager
+deployAlertManager: True
+
 alertmanager:
   ## Alertmanager configuration directives
   ## Ref: https://prometheus.io/docs/alerting/configuration/
@@ -5,18 +19,18 @@ alertmanager:
   config:
     global:
       resolve_timeout: 5m
-
-    receivers:
-      - name: webhook
-        webhook_configs:
-          - url: 'http://alertmanagerwh:30500/'
-
     route:
       group_by: ['job']
-      group_interval: 5m
       group_wait: 30s
-      receiver: webhook
+      group_interval: 5m
       repeat_interval: 12h
+      receiver: 'null'
+      routes:
+      - match:
+          alertname: DeadMansSwitch
+        receiver: 'null'
+    receivers:
+    - name: 'null'
 
   ## External URL at which Alertmanager will be reachable
   ##
@@ -26,7 +40,7 @@ alertmanager:
   ##
   image:
     repository: quay.io/prometheus/alertmanager
-    tag: v0.5.1
+    tag: v0.14.0
 
   ingress:
     ## If true, Alertmanager Ingress will be created
@@ -62,12 +76,24 @@ alertmanager:
   ##
   replicaCount: 1
 
+  ## Pod anti-affinity can prevent the scheduler from placing Alertmanager replicas on the same node.
+  ## The default value "soft" means that the scheduler should *prefer* to not schedule two replica pods onto the same node but no guarantee is provided.
+  ## The value "hard" means that the scheduler is *required* to not schedule two replica pods onto the same node.
+  ## The value "" will disable pod anti-affinity so that no anti-affinity rules will be configured.
+  podAntiAffinity: "soft"
+
   ## Resource limits & requests
   ## Ref: https://kubernetes.io/docs/user-guide/compute-resources/
   ##
   resources: {}
     # requests:
     #   memory: 400Mi
+
+  ## List of Secrets in the same namespace as the Prometheus
+  ## object, which shall be mounted into the Prometheus Pods.
+  ## Ref: https://github.com/coreos/prometheus-operator/blob/master/Documentation/api.md#prometheusspec
+  ##
+  secrets: []
 
   service:
     ## Annotations to be added to the Service
@@ -105,15 +131,14 @@ alertmanager:
   ## Ref: https://github.com/coreos/prometheus-operator/blob/master/Documentation/user-guides/storage.md
   ##
   storageSpec: {}
-  #   class: default
-  #   resources:
-  #     requests:
-  #       storage: 2Gi
-  #   selector: {}
-
-## If true, create & use RBAC resources
-##
-rbacEnable: true
+  #  volumeClaimTemplate:
+  #    spec:
+  #      storageClassName: gluster
+  #      accessModes: ["ReadWriteOnce"]
+  #      resources:
+  #        requests:
+  #          storage: 50Gi
+  #    selector: {}
 
 prometheus:
   ## Alertmanagers to which alerts will be sent
@@ -141,7 +166,7 @@ prometheus:
   ##
   image:
     repository: quay.io/prometheus/prometheus
-    tag: v1.5.2
+    tag: v2.2.1
 
   ingress:
     ## If true, Prometheus Ingress will be created
@@ -176,6 +201,12 @@ prometheus:
   ## Number of Prometheus replicas desired
   ##
   replicaCount: 1
+
+  ## Pod anti-affinity can prevent the scheduler from placing Prometheus replicas on the same node.
+  ## The default value "soft" means that the scheduler should *prefer* to not schedule two replica pods onto the same node but no guarantee is provided.
+  ## The value "hard" means that the scheduler is *required* to not schedule two replica pods onto the same node.
+  ## The value "" will disable pod anti-affinity so that no anti-affinity rules will be configured.
+  podAntiAffinity: "soft"
 
   ## Resource limits & requests
   ## Ref: https://kubernetes.io/docs/user-guide/compute-resources/
@@ -326,8 +357,14 @@ prometheus:
   ## Ref: https://github.com/coreos/prometheus-operator/blob/master/Documentation/user-guides/storage.md
   ##
   storageSpec: {}
-  #   class: default
-  #   resources:
-  #     requests:
-  #       storage: 16Gi
-  #   selector: {}
+  #  volumeClaimTemplate:
+  #    spec:
+  #      storageClassName: gluster
+  #      accessModes: ["ReadWriteOnce"]
+  #      resources:
+  #        requests:
+  #          storage: 50Gi
+  #    selector: {}
+
+# default rules are in templates/general.rules.yaml
+# prometheusRules: {}

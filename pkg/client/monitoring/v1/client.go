@@ -15,16 +15,76 @@
 package v1
 
 import (
+	"fmt"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/pkg/api"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"strings"
 )
 
 const (
-	Group = "monitoring.coreos.com"
+	Group                 = "monitoring.coreos.com"
+	PrometheusKindKey     = "prometheus"
+	AlertManagerKindKey   = "alertmanager"
+	ServiceMonitorKindKey = "servicemonitor"
 )
+
+type CrdKind struct {
+	Kind     string
+	Plural   string
+	SpecName string
+}
+
+type CrdKinds struct {
+	KindsString    string
+	Prometheus     CrdKind
+	Alertmanager   CrdKind
+	ServiceMonitor CrdKind
+}
+
+var DefaultCrdKinds CrdKinds = CrdKinds{
+	KindsString:    "",
+	Prometheus:     CrdKind{Plural: PrometheusName, Kind: PrometheusesKind, SpecName: "github.com/coreos/prometheus-operator/pkg/client/monitoring/v1.Prometheus"},
+	ServiceMonitor: CrdKind{Plural: ServiceMonitorName, Kind: ServiceMonitorsKind, SpecName: "github.com/coreos/prometheus-operator/pkg/client/monitoring/v1.ServiceMonitor"},
+	Alertmanager:   CrdKind{Plural: AlertmanagerName, Kind: AlertmanagersKind, SpecName: "github.com/coreos/prometheus-operator/pkg/client/monitoring/v1.Alertmanager"},
+}
+
+// Implement the flag.Value interface
+func (crdkinds *CrdKinds) String() string {
+	return crdkinds.KindsString
+}
+
+// Set Implement the flag.Set interface
+func (crdkinds *CrdKinds) Set(value string) error {
+	*crdkinds = DefaultCrdKinds
+	if value == "" {
+		value = fmt.Sprintf("%s=%s:%s,%s=%s:%s,%s=%s:%s",
+			PrometheusKindKey, PrometheusesKind, PrometheusName,
+			AlertManagerKindKey, AlertmanagersKind, AlertmanagerName,
+			ServiceMonitorKindKey, ServiceMonitorsKind, ServiceMonitorName)
+	}
+	splited := strings.Split(value, ",")
+	for _, pair := range splited {
+		sp := strings.Split(pair, "=")
+		kind := strings.Split(sp[1], ":")
+		crdKind := CrdKind{Plural: kind[1], Kind: kind[0]}
+		switch kindKey := sp[0]; kindKey {
+		case PrometheusKindKey:
+			(*crdkinds).Prometheus = crdKind
+		case ServiceMonitorKindKey:
+			(*crdkinds).ServiceMonitor = crdKind
+		case AlertManagerKindKey:
+			(*crdkinds).Alertmanager = crdKind
+		default:
+			fmt.Printf("Warning: unknown kind: %s... ignoring", kindKey)
+		}
+
+	}
+	(*crdkinds).KindsString = value
+	return nil
+}
 
 var Version = "v1"
 
@@ -35,28 +95,30 @@ type MonitoringV1Interface interface {
 	ServiceMonitorsGetter
 }
 
+// +k8s:deepcopy-gen=false
 type MonitoringV1Client struct {
 	restClient    rest.Interface
 	dynamicClient *dynamic.Client
+	crdKinds      *CrdKinds
 }
 
 func (c *MonitoringV1Client) Prometheuses(namespace string) PrometheusInterface {
-	return newPrometheuses(c.restClient, c.dynamicClient, namespace)
+	return newPrometheuses(c.restClient, c.dynamicClient, c.crdKinds.Prometheus, namespace)
 }
 
 func (c *MonitoringV1Client) Alertmanagers(namespace string) AlertmanagerInterface {
-	return newAlertmanagers(c.restClient, c.dynamicClient, namespace)
+	return newAlertmanagers(c.restClient, c.dynamicClient, c.crdKinds.Alertmanager, namespace)
 }
 
 func (c *MonitoringV1Client) ServiceMonitors(namespace string) ServiceMonitorInterface {
-	return newServiceMonitors(c.restClient, c.dynamicClient, namespace)
+	return newServiceMonitors(c.restClient, c.dynamicClient, c.crdKinds.ServiceMonitor, namespace)
 }
 
 func (c *MonitoringV1Client) RESTClient() rest.Interface {
 	return c.restClient
 }
 
-func NewForConfig(apiGroup string, c *rest.Config) (*MonitoringV1Client, error) {
+func NewForConfig(crdKinds *CrdKinds, apiGroup string, c *rest.Config) (*MonitoringV1Client, error) {
 	config := *c
 	SetConfigDefaults(apiGroup, &config)
 	client, err := rest.RESTClientFor(&config)
@@ -69,7 +131,7 @@ func NewForConfig(apiGroup string, c *rest.Config) (*MonitoringV1Client, error) 
 		return nil, err
 	}
 
-	return &MonitoringV1Client{client, dynamicClient}, nil
+	return &MonitoringV1Client{client, dynamicClient, crdKinds}, nil
 }
 
 func SetConfigDefaults(apiGroup string, config *rest.Config) {
@@ -78,6 +140,6 @@ func SetConfigDefaults(apiGroup string, config *rest.Config) {
 		Version: Version,
 	}
 	config.APIPath = "/apis"
-	config.NegotiatedSerializer = serializer.DirectCodecFactory{CodecFactory: api.Codecs}
+	config.NegotiatedSerializer = serializer.DirectCodecFactory{CodecFactory: scheme.Codecs}
 	return
 }

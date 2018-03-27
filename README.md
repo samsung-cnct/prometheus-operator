@@ -1,5 +1,5 @@
 # Prometheus Operator
-[![Build Status](https://jenkins-monitoring-public.prod.coreos.systems/buildStatus/icon?job=po-tests-master&build=1)](https://jenkins-monitoring-public.prod.coreos.systems/job/po-tests-master/1/)
+[![Build Status](https://travis-ci.org/coreos/prometheus-operator.svg?branch=master)](https://travis-ci.org/coreos/prometheus-operator)
 [![Go Report Card](https://goreportcard.com/badge/coreos/prometheus-operator "Go Report Card")](https://goreportcard.com/report/coreos/prometheus-operator)
 
 **Project status: *beta*** Not all planned features are completed. The API, spec, status and other user facing objects may change, but in a backward compatible way.
@@ -149,4 +149,4 @@ kubectl delete --ignore-not-found customresourcedefinitions \
 2. You can execute the *e2e tests* on a local minikube by compiling the static binary (which is what is used for the container images) with `make crossbuild`.
   1. build the container image with the docker host from within minikube by running `eval $(minikube docker-env)`.
   2. You can build the container using `make container`.
-  3. Finally run the e2e tests using `make e2e-tests`.
+  3. Finally run the e2e tests using `make e2e-test`.

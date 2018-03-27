@@ -22,7 +22,7 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/pkg/errors"
-	yaml "gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/coreos/prometheus-operator/pkg/client/monitoring/v1"
@@ -42,12 +42,40 @@ func configMapRuleFileFolder(configMapNumber int) string {
 
 func stringMapToMapSlice(m map[string]string) yaml.MapSlice {
 	res := yaml.MapSlice{}
+	ks := make([]string, 0)
 
-	for k, v := range m {
-		res = append(res, yaml.MapItem{Key: k, Value: v})
+	for k, _ := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+
+	for _, k := range ks {
+		res = append(res, yaml.MapItem{Key: k, Value: m[k]})
 	}
 
 	return res
+}
+
+func addTLStoYaml(cfg yaml.MapSlice, tls *v1.TLSConfig) yaml.MapSlice {
+	if tls != nil {
+		tlsConfig := yaml.MapSlice{
+			{Key: "insecure_skip_verify", Value: tls.InsecureSkipVerify},
+		}
+		if tls.CAFile != "" {
+			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "ca_file", Value: tls.CAFile})
+		}
+		if tls.CertFile != "" {
+			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "cert_file", Value: tls.CertFile})
+		}
+		if tls.KeyFile != "" {
+			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "key_file", Value: tls.KeyFile})
+		}
+		if tls.ServerName != "" {
+			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "server_name", Value: tls.ServerName})
+		}
+		cfg = append(cfg, yaml.MapItem{Key: "tls_config", Value: tlsConfig})
+	}
+	return cfg
 }
 
 func generateConfig(p *v1.Prometheus, mons map[string]*v1.ServiceMonitor, ruleConfigMaps int, basicAuthSecrets map[string]BasicAuthCredentials) ([]byte, error) {
@@ -110,8 +138,10 @@ func generateConfig(p *v1.Prometheus, mons map[string]*v1.ServiceMonitor, ruleCo
 		}
 	}
 	var alertmanagerConfigs []yaml.MapSlice
-	for _, am := range p.Spec.Alerting.Alertmanagers {
-		alertmanagerConfigs = append(alertmanagerConfigs, generateAlertmanagerConfig(version, am))
+	if p.Spec.Alerting != nil {
+		for _, am := range p.Spec.Alerting.Alertmanagers {
+			alertmanagerConfigs = append(alertmanagerConfigs, generateAlertmanagerConfig(version, am))
+		}
 	}
 
 	cfg = append(cfg, yaml.MapItem{
@@ -128,6 +158,14 @@ func generateConfig(p *v1.Prometheus, mons map[string]*v1.ServiceMonitor, ruleCo
 			},
 		},
 	})
+
+	if len(p.Spec.RemoteWrite) > 0 && version.Major >= 2 {
+		cfg = append(cfg, generateRemoteWriteConfig(version, p.Spec.RemoteWrite, basicAuthSecrets))
+	}
+
+	if len(p.Spec.RemoteRead) > 0 && version.Major >= 2 {
+		cfg = append(cfg, generateRemoteReadConfig(version, p.Spec.RemoteRead, basicAuthSecrets))
+	}
 
 	return yaml.Marshal(cfg)
 }
@@ -170,30 +208,15 @@ func generateServiceMonitorConfig(version semver.Version, m *v1.ServiceMonitor, 
 	if ep.Scheme != "" {
 		cfg = append(cfg, yaml.MapItem{Key: "scheme", Value: ep.Scheme})
 	}
-	if ep.TLSConfig != nil {
-		tlsConfig := yaml.MapSlice{
-			{Key: "insecure_skip_verify", Value: ep.TLSConfig.InsecureSkipVerify},
-		}
-		if ep.TLSConfig.CAFile != "" {
-			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "ca_file", Value: ep.TLSConfig.CAFile})
-		}
-		if ep.TLSConfig.CertFile != "" {
-			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "cert_file", Value: ep.TLSConfig.CertFile})
-		}
-		if ep.TLSConfig.KeyFile != "" {
-			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "key_file", Value: ep.TLSConfig.KeyFile})
-		}
-		if ep.TLSConfig.ServerName != "" {
-			tlsConfig = append(tlsConfig, yaml.MapItem{Key: "server_name", Value: ep.TLSConfig.ServerName})
-		}
-		cfg = append(cfg, yaml.MapItem{Key: "tls_config", Value: tlsConfig})
-	}
+
+	cfg = addTLStoYaml(cfg, ep.TLSConfig)
+
 	if ep.BearerTokenFile != "" {
 		cfg = append(cfg, yaml.MapItem{Key: "bearer_token_file", Value: ep.BearerTokenFile})
 	}
 
 	if ep.BasicAuth != nil {
-		if s, ok := basicAuthSecrets[fmt.Sprintf("%s/%s/%d", m.Namespace, m.Name, i)]; ok {
+		if s, ok := basicAuthSecrets[fmt.Sprintf("serviceMonitor/%s/%s/%d", m.Namespace, m.Name, i)]; ok {
 			cfg = append(cfg, yaml.MapItem{
 				Key: "basic_auth", Value: yaml.MapSlice{
 					{Key: "username", Value: s.username},
@@ -356,6 +379,42 @@ func generateServiceMonitorConfig(version semver.Version, m *v1.ServiceMonitor, 
 
 	cfg = append(cfg, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
 
+	if ep.MetricRelabelConfigs != nil {
+		var metricRelabelings []yaml.MapSlice
+		for _, c := range ep.MetricRelabelConfigs {
+			relabeling := yaml.MapSlice{
+				{Key: "source_labels", Value: c.SourceLabels},
+			}
+
+			if c.Separator != "" {
+				relabeling = append(relabeling, yaml.MapItem{Key: "separator", Value: c.Separator})
+			}
+
+			if c.TargetLabel != "" {
+				relabeling = append(relabeling, yaml.MapItem{Key: "target_label", Value: c.TargetLabel})
+			}
+
+			if c.Regex != "" {
+				relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex})
+			}
+
+			if c.Modulus != uint64(0) {
+				relabeling = append(relabeling, yaml.MapItem{Key: "modulus", Value: c.Modulus})
+			}
+
+			if c.Replacement != "" {
+				relabeling = append(relabeling, yaml.MapItem{Key: "replacement", Value: c.Replacement})
+			}
+
+			if c.Action != "" {
+				relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
+			}
+
+			metricRelabelings = append(metricRelabelings, relabeling)
+		}
+		cfg = append(cfg, yaml.MapItem{Key: "metric_relabel_configs", Value: metricRelabelings})
+	}
+
 	return cfg
 }
 
@@ -425,6 +484,8 @@ func generateAlertmanagerConfig(version semver.Version, am v1.AlertmanagerEndpoi
 		{Key: "scheme", Value: am.Scheme},
 	}
 
+	cfg = addTLStoYaml(cfg, am.TLSConfig)
+
 	switch version.Major {
 	case 1:
 		if version.Minor < 7 {
@@ -434,6 +495,10 @@ func generateAlertmanagerConfig(version semver.Version, am v1.AlertmanagerEndpoi
 		}
 	case 2:
 		cfg = append(cfg, k8sSDWithNamespaces([]string{am.Namespace}))
+	}
+
+	if am.BearerTokenFile != "" {
+		cfg = append(cfg, yaml.MapItem{Key: "bearer_token_file", Value: am.BearerTokenFile})
 	}
 
 	var relabelings []yaml.MapSlice
@@ -469,4 +534,144 @@ func generateAlertmanagerConfig(version semver.Version, am v1.AlertmanagerEndpoi
 	cfg = append(cfg, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
 
 	return cfg
+}
+
+func generateRemoteReadConfig(version semver.Version, specs []v1.RemoteReadSpec, basicAuthSecrets map[string]BasicAuthCredentials) yaml.MapItem {
+
+	cfgs := []yaml.MapSlice{}
+
+	for i, spec := range specs {
+		//defaults
+		if spec.RemoteTimeout == "" {
+			spec.RemoteTimeout = "30s"
+		}
+
+		cfg := yaml.MapSlice{
+			{Key: "url", Value: spec.URL},
+			{Key: "remote_timeout", Value: spec.RemoteTimeout},
+		}
+
+		if len(spec.RequiredMatchers) > 0 {
+			cfg = append(cfg, yaml.MapItem{Key: "required_matchers", Value: stringMapToMapSlice(spec.RequiredMatchers)})
+		}
+
+		if spec.ReadRecent {
+			cfg = append(cfg, yaml.MapItem{Key: "read_recent", Value: spec.ReadRecent})
+		}
+
+		if spec.BasicAuth != nil {
+			if s, ok := basicAuthSecrets[fmt.Sprintf("remoteRead/%d", i)]; ok {
+				cfg = append(cfg, yaml.MapItem{
+					Key: "basic_auth", Value: yaml.MapSlice{
+						{Key: "username", Value: s.username},
+						{Key: "password", Value: s.password},
+					},
+				})
+			}
+		}
+
+		if spec.BearerTokenFile != "" {
+			cfg = append(cfg, yaml.MapItem{Key: "bearer_token_file", Value: spec.BearerTokenFile})
+		}
+
+		cfg = addTLStoYaml(cfg, spec.TLSConfig)
+
+		if spec.ProxyURL != "" {
+			cfg = append(cfg, yaml.MapItem{Key: "proxy_url", Value: spec.ProxyURL})
+		}
+
+		cfgs = append(cfgs, cfg)
+
+	}
+
+	return yaml.MapItem{
+		Key:   "remote_read",
+		Value: cfgs,
+	}
+}
+
+func generateRemoteWriteConfig(version semver.Version, specs []v1.RemoteWriteSpec, basicAuthSecrets map[string]BasicAuthCredentials) yaml.MapItem {
+
+	cfgs := []yaml.MapSlice{}
+
+	for i, spec := range specs {
+		//defaults
+		if spec.RemoteTimeout == "" {
+			spec.RemoteTimeout = "30s"
+		}
+
+		cfg := yaml.MapSlice{
+			{Key: "url", Value: spec.URL},
+			{Key: "remote_timeout", Value: spec.RemoteTimeout},
+		}
+
+		if spec.WriteRelabelConfigs != nil {
+			relabelings := []yaml.MapSlice{}
+			for _, c := range spec.WriteRelabelConfigs {
+				relabeling := yaml.MapSlice{
+					{Key: "source_labels", Value: c.SourceLabels},
+				}
+
+				if c.Separator != "" {
+					relabeling = append(relabeling, yaml.MapItem{Key: "separator", Value: c.Separator})
+				}
+
+				if c.TargetLabel != "" {
+					relabeling = append(relabeling, yaml.MapItem{Key: "target_label", Value: c.TargetLabel})
+				}
+
+				if c.Regex != "" {
+					relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex})
+				}
+
+				if c.Modulus != uint64(0) {
+					relabeling = append(relabeling, yaml.MapItem{Key: "modulus", Value: c.Modulus})
+				}
+
+				if c.Replacement != "" {
+					relabeling = append(relabeling, yaml.MapItem{Key: "replacement", Value: c.Replacement})
+				}
+
+				if c.Action != "" {
+					relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
+				}
+				relabelings = append(relabelings, relabeling)
+			}
+
+			cfg = append(cfg, yaml.MapItem{Key: "write_relabel_configs", Value: relabelings})
+
+		}
+
+		if spec.BasicAuth != nil {
+			if s, ok := basicAuthSecrets[fmt.Sprintf("remoteWrite/%d", i)]; ok {
+				cfg = append(cfg, yaml.MapItem{
+					Key: "basic_auth", Value: yaml.MapSlice{
+						{Key: "username", Value: s.username},
+						{Key: "password", Value: s.password},
+					},
+				})
+			}
+		}
+
+		if spec.BearerToken != "" {
+			cfg = append(cfg, yaml.MapItem{Key: "bearer_token", Value: spec.BearerToken})
+		}
+
+		if spec.BearerTokenFile != "" {
+			cfg = append(cfg, yaml.MapItem{Key: "bearer_token_file", Value: spec.BearerTokenFile})
+		}
+
+		cfg = addTLStoYaml(cfg, spec.TLSConfig)
+
+		if spec.ProxyURL != "" {
+			cfg = append(cfg, yaml.MapItem{Key: "proxy_url", Value: spec.ProxyURL})
+		}
+
+		cfgs = append(cfgs, cfg)
+	}
+
+	return yaml.MapItem{
+		Key:   "remote_write",
+		Value: cfgs,
+	}
 }

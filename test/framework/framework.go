@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -59,7 +59,7 @@ func New(ns, kubeconfig, opImage string) (*Framework, error) {
 		return nil, errors.Wrap(err, "creating http-client failed")
 	}
 
-	mclient, err := monitoringv1.NewForConfig(monitoringv1.Group, config)
+	mclient, err := monitoringv1.NewForConfig(&monitoringv1.DefaultCrdKinds, monitoringv1.Group, config)
 	if err != nil {
 		return nil, errors.Wrap(err, "creating monitoring client failed")
 	}
